@@ -1,0 +1,310 @@
+﻿Using C# and targeting .NET Framework 4.7+ and compiling with csc.exe, write a method to adjust an image's brigtness, contrast and saturation using ColorMatrix. Such as: 
+ApplyAdjustment(Bitmap bitmap, float brightness, float contrast, float saturation)
+Here's a C# method that adjusts image brightness, contrast, and saturation using ColorMatrix for .NET Framework 4.7+:
+
+csharp
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+
+public static class ImageAdjustment
+{
+    public static void ApplyAdjustment(Bitmap bitmap, float brightness, float contrast, float saturation)
+    {
+        if (bitmap == null)
+            throw new ArgumentNullException(nameof(bitmap));
+
+        // Validate input ranges
+        brightness = Math.Max(-1.0f, Math.Min(1.0f, brightness));    // -1 to 1
+        contrast = Math.Max(-1.0f, Math.Min(1.0f, contrast));        // -1 to 1
+        saturation = Math.Max(0.0f, Math.Min(2.0f, saturation));     // 0 to 2
+
+        // Create color matrix for brightness, contrast, and saturation
+        ColorMatrix colorMatrix = CreateAdjustmentMatrix(brightness, contrast, saturation);
+
+        // Apply the color matrix
+        using (Graphics graphics = Graphics.FromImage(bitmap))
+        {
+            ImageAttributes imageAttributes = new ImageAttributes();
+            
+            try
+            {
+                imageAttributes.SetColorMatrix(colorMatrix, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+                
+                Rectangle rect = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+                graphics.DrawImage(bitmap, rect, 0, 0, bitmap.Width, bitmap.Height, 
+                                 GraphicsUnit.Pixel, imageAttributes);
+            }
+            finally
+            {
+                imageAttributes?.Dispose();
+            }
+        }
+    }
+
+    private static ColorMatrix CreateAdjustmentMatrix(float brightness, float contrast, float saturation)
+    {
+        // Convert brightness from [-1, 1] to [0, 2] scale for matrix
+        float brightnessFactor = brightness + 1.0f;
+        
+        // Convert contrast from [-1, 1] to scale factor
+        // -1 = minimum contrast (0), 0 = normal (1), 1 = maximum contrast (2)
+        float contrastFactor = contrast + 1.0f;
+        
+        // Calculate contrast translation (moves the midpoint)
+        float contrastTranslate = (1.0f - contrastFactor) / 2.0f;
+
+        // Calculate saturation matrix components
+        // Based on luminance values for RGB: 0.299R + 0.587G + 0.114B
+        float luminanceR = 0.299f;
+        float luminanceG = 0.587f;
+        float luminanceB = 0.114f;
+        
+        float saturationR = luminanceR * (1 - saturation);
+        float saturationG = luminanceG * (1 - saturation);
+        float saturationB = luminanceB * (1 - saturation);
+        
+        float saturationA = saturationR + saturation;
+        float saturationB1 = saturationG + saturation;
+        float saturationC = saturationB + saturation;
+
+        // Create the combined color matrix
+        // Order of operations: saturation -> contrast -> brightness
+        return new ColorMatrix(new float[][]
+        {
+            // Red channel
+            new float[] { saturationA * contrastFactor, saturationR * contrastFactor, saturationR * contrastFactor, 0, 0 },
+            // Green channel  
+            new float[] { saturationG * contrastFactor, saturationB1 * contrastFactor, saturationG * contrastFactor, 0, 0 },
+            // Blue channel
+            new float[] { saturationB * contrastFactor, saturationB * contrastFactor, saturationC * contrastFactor, 0, 0 },
+            // Alpha channel (unchanged)
+            new float[] { 0, 0, 0, 1, 0 },
+            // Translation row (brightness and contrast offset)
+            new float[] { 
+                contrastTranslate * brightnessFactor + brightness, 
+                contrastTranslate * brightnessFactor + brightness, 
+                contrastTranslate * brightnessFactor + brightness, 
+                0, 
+                brightnessFactor 
+            }
+        });
+    }
+}
+And here's an example of how to use it:
+
+csharp
+using System;
+using System.Drawing;
+
+class Program
+{
+    static void Main()
+    {
+        // Load an image
+        using (Bitmap originalImage = new Bitmap("input.jpg"))
+        {
+            // Create a copy to work with
+            using (Bitmap adjustedImage = new Bitmap(originalImage))
+            {
+                // Apply adjustments: brightness +0.2, contrast +0.3, saturation +0.5
+                ImageAdjustment.ApplyAdjustment(adjustedImage, 0.2f, 0.3f, 1.5f);
+                
+                // Save the result
+                adjustedImage.Save("output.jpg");
+                
+                Console.WriteLine("Image adjustment completed!");
+            }
+        }
+    }
+}
+Compilation Instructions
+To compile this code using csc.exe:
+
+bash
+csc /target:exe /out:ImageAdjustment.exe /reference:System.Drawing.dll YourFile.cs
+Parameter Ranges
+Brightness: -1.0 (darkest) to 1.0 (brightest), where 0 is normal
+
+Contrast: -1.0 (minimum contrast) to 1.0 (maximum contrast), where 0 is normal
+
+Saturation: 0.0 (grayscale) to 2.0 (high saturation), where 1.0 is normal
+
+Key Features
+Uses ColorMatrix for efficient pixel operations
+
+Proper resource disposal with using statements
+
+Input validation for parameter ranges
+
+Combined matrix operations for optimal performance
+
+Works with any Bitmap format supported by .NET
+
+The method applies all adjustments in a single pass through the image, making it very efficient compared to manual pixel-by-pixel manipulation.
+
+Great work.
+I have made this utility to use the class you wrote. But using float values is hard to remember. Can you adjust the argument parsing logic to accept percentages instead of floats? for example:
+Brightness, contrast and saturation would be between -100% to 100%
+
+/*
+Brightness: -1.0 (darkest) to 1.0 (brightest), where 0 is normal
+Contrast: -1.0 (minimum contrast) to 1.0 (maximum contrast), where 0 is normal
+Saturation: 0.0 (grayscale) to 2.0 (high saturation), where 1.0 is normal
+*/
+
+using System;
+using System.Drawing;
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        if (args.Length != 5)
+        {
+            Console.WriteLine("Usage: program.exe INPUT OUTPUT BRIGHTNESS CONTRAST SATURATION");
+            Console.WriteLine("Example: program.exe input.jpg output.jpg 0.2 1.2 1.5");
+            return;
+        }
+
+        string inputPath = args[0];
+        string outputPath = args[1];
+
+        if (!float.TryParse(args[2], out float brightness) ||
+            !float.TryParse(args[3], out float contrast) ||
+            !float.TryParse(args[4], out float saturation))
+        {
+            Console.WriteLine("Error: BRIGHTNESS, CONTRAST, and SATURATION must be valid float values.");
+            return;
+        }
+
+        try
+        {
+            using (Bitmap bitmap = new Bitmap(inputPath))
+            {
+                ImageAdjustment.ApplyAdjustment(bitmap, brightness, contrast, saturation);
+                bitmap.Save(outputPath);
+            }
+
+            Console.WriteLine("Image saved to: " + outputPath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error processing image: " + ex.Message);
+        }
+    }
+}
+Here's the updated utility that accepts percentages (-100% to 100%) instead of float values, with the conversion logic handled automatically:
+
+csharp
+using System;
+using System.Drawing;
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        if (args.Length != 5)
+        {
+            Console.WriteLine("Usage: program.exe INPUT OUTPUT BRIGHTNESS% CONTRAST% SATURATION%");
+            Console.WriteLine("Example: program.exe input.jpg output.jpg 20 -15 50");
+            Console.WriteLine("Ranges: -100% to 100% for all parameters");
+            return;
+        }
+
+        string inputPath = args[0];
+        string outputPath = args[1];
+
+        if (!int.TryParse(args[2], out int brightnessPercent) ||
+            !int.TryParse(args[3], out int contrastPercent) ||
+            !int.TryParse(args[4], out int saturationPercent))
+        {
+            Console.WriteLine("Error: BRIGHTNESS, CONTRAST, and SATURATION must be valid integer percentages.");
+            return;
+        }
+
+        // Validate percentage ranges
+        if (brightnessPercent < -100 || brightnessPercent > 100 ||
+            contrastPercent < -100 || contrastPercent > 100 ||
+            saturationPercent < -100 || saturationPercent > 100)
+        {
+            Console.WriteLine("Error: All percentages must be between -100 and 100.");
+            return;
+        }
+
+        try
+        {
+            // Convert percentages to float values expected by the adjustment method
+            float brightness = PercentageToBrightness(brightnessPercent);
+            float contrast = PercentageToContrast(contrastPercent);
+            float saturation = PercentageToSaturation(saturationPercent);
+
+            Console.WriteLine($"Adjusting image: Brightness={brightnessPercent}%, Contrast={contrastPercent}%, Saturation={saturationPercent}%");
+            Console.WriteLine($"Converted to: Brightness={brightness:F2}, Contrast={contrast:F2}, Saturation={saturation:F2}");
+
+            using (Bitmap bitmap = new Bitmap(inputPath))
+            {
+                ImageAdjustment.ApplyAdjustment(bitmap, brightness, contrast, saturation);
+                bitmap.Save(outputPath);
+            }
+
+            Console.WriteLine("Image successfully saved to: " + outputPath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error processing image: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Converts brightness percentage (-100 to 100) to float value (-1.0 to 1.0)
+    /// -100% = -1.0 (darkest), 0% = 0.0 (normal), 100% = 1.0 (brightest)
+    /// </summary>
+    private static float PercentageToBrightness(int percent)
+    {
+        return percent / 100.0f;
+    }
+
+    /// <summary>
+    /// Converts contrast percentage (-100 to 100) to float value (-1.0 to 1.0)
+    /// -100% = -1.0 (minimum contrast), 0% = 0.0 (normal), 100% = 1.0 (maximum contrast)
+    /// </summary>
+    private static float PercentageToContrast(int percent)
+    {
+        return percent / 100.0f;
+    }
+
+    /// <summary>
+    /// Converts saturation percentage (-100 to 100) to float value (0.0 to 2.0)
+    /// -100% = 0.0 (grayscale), 0% = 1.0 (normal), 100% = 2.0 (high saturation)
+    /// </summary>
+    private static float PercentageToSaturation(int percent)
+    {
+        // Map -100..0..100 to 0.0..1.0..2.0
+        return 1.0f + (percent / 100.0f);
+    }
+}
+And here's the updated usage information and examples:
+
+Usage Examples
+bash
+# Normal usage with percentages
+program.exe input.jpg output.jpg 0 0 0        # No changes
+program.exe input.jpg output.jpg 20 -15 50    # +20% brightness, -15% contrast, +50% saturation
+program.exe input.jpg output.jpg -30 80 -100  # -30% brightness, +80% contrast, -100% saturation (grayscale)
+program.exe input.jpg output.jpg 100 100 100  # Maximum adjustments
+Percentage to Float Conversion
+The conversion logic works as follows:
+
+Brightness: -100% = -1.0, 0% = 0.0, +100% = +1.0
+
+Contrast: -100% = -1.0, 0% = 0.0, +100% = +1.0
+
+Saturation: -100% = 0.0, 0% = 1.0, +100% = 2.0
+
+Compilation
+Compile with:
+
+bash
+csc /target:exe /out:ImageAdjustment.exe /reference:System.Drawing.dll Program.cs ImageAdjustment.cs
+This makes the utility much more intuitive to use since percentages are easier to understand and remember than abstract float values. The user can now think in terms of "I want 20% more brightness" rather than "I need a brightness value of 0.2".

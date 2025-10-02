@@ -1,0 +1,1143 @@
+﻿Using C# and targeting .NET Framework 4.7+ and compiling with csc.exe, write a method to adjust an image's brigtness, contrast and saturation using ColorMatrix. Such as: 
+ApplyAdjustment(Bitmap bitmap, float brightness, float contrast, float saturation)
+Here's a C# method that adjusts image brightness, contrast, and saturation using ColorMatrix for .NET Framework 4.7+:
+
+csharp
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+
+public static class ImageAdjustment
+{
+    public static void ApplyAdjustment(Bitmap bitmap, float brightness, float contrast, float saturation)
+    {
+        if (bitmap == null)
+            throw new ArgumentNullException(nameof(bitmap));
+
+        // Validate input ranges
+        brightness = Math.Max(-1.0f, Math.Min(1.0f, brightness));    // -1 to 1
+        contrast = Math.Max(-1.0f, Math.Min(1.0f, contrast));        // -1 to 1
+        saturation = Math.Max(0.0f, Math.Min(2.0f, saturation));     // 0 to 2
+
+        // Create color matrix for brightness, contrast, and saturation
+        ColorMatrix colorMatrix = CreateAdjustmentMatrix(brightness, contrast, saturation);
+
+        // Apply the color matrix
+        using (Graphics graphics = Graphics.FromImage(bitmap))
+        {
+            ImageAttributes imageAttributes = new ImageAttributes();
+            
+            try
+            {
+                imageAttributes.SetColorMatrix(colorMatrix, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+                
+                Rectangle rect = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+                graphics.DrawImage(bitmap, rect, 0, 0, bitmap.Width, bitmap.Height, 
+                                 GraphicsUnit.Pixel, imageAttributes);
+            }
+            finally
+            {
+                imageAttributes?.Dispose();
+            }
+        }
+    }
+
+    private static ColorMatrix CreateAdjustmentMatrix(float brightness, float contrast, float saturation)
+    {
+        // Convert brightness from [-1, 1] to [0, 2] scale for matrix
+        float brightnessFactor = brightness + 1.0f;
+        
+        // Convert contrast from [-1, 1] to scale factor
+        // -1 = minimum contrast (0), 0 = normal (1), 1 = maximum contrast (2)
+        float contrastFactor = contrast + 1.0f;
+        
+        // Calculate contrast translation (moves the midpoint)
+        float contrastTranslate = (1.0f - contrastFactor) / 2.0f;
+
+        // Calculate saturation matrix components
+        // Based on luminance values for RGB: 0.299R + 0.587G + 0.114B
+        float luminanceR = 0.299f;
+        float luminanceG = 0.587f;
+        float luminanceB = 0.114f;
+        
+        float saturationR = luminanceR * (1 - saturation);
+        float saturationG = luminanceG * (1 - saturation);
+        float saturationB = luminanceB * (1 - saturation);
+        
+        float saturationA = saturationR + saturation;
+        float saturationB1 = saturationG + saturation;
+        float saturationC = saturationB + saturation;
+
+        // Create the combined color matrix
+        // Order of operations: saturation -> contrast -> brightness
+        return new ColorMatrix(new float[][]
+        {
+            // Red channel
+            new float[] { saturationA * contrastFactor, saturationR * contrastFactor, saturationR * contrastFactor, 0, 0 },
+            // Green channel  
+            new float[] { saturationG * contrastFactor, saturationB1 * contrastFactor, saturationG * contrastFactor, 0, 0 },
+            // Blue channel
+            new float[] { saturationB * contrastFactor, saturationB * contrastFactor, saturationC * contrastFactor, 0, 0 },
+            // Alpha channel (unchanged)
+            new float[] { 0, 0, 0, 1, 0 },
+            // Translation row (brightness and contrast offset)
+            new float[] { 
+                contrastTranslate * brightnessFactor + brightness, 
+                contrastTranslate * brightnessFactor + brightness, 
+                contrastTranslate * brightnessFactor + brightness, 
+                0, 
+                brightnessFactor 
+            }
+        });
+    }
+}
+And here's an example of how to use it:
+
+csharp
+using System;
+using System.Drawing;
+
+class Program
+{
+    static void Main()
+    {
+        // Load an image
+        using (Bitmap originalImage = new Bitmap("input.jpg"))
+        {
+            // Create a copy to work with
+            using (Bitmap adjustedImage = new Bitmap(originalImage))
+            {
+                // Apply adjustments: brightness +0.2, contrast +0.3, saturation +0.5
+                ImageAdjustment.ApplyAdjustment(adjustedImage, 0.2f, 0.3f, 1.5f);
+                
+                // Save the result
+                adjustedImage.Save("output.jpg");
+                
+                Console.WriteLine("Image adjustment completed!");
+            }
+        }
+    }
+}
+Compilation Instructions
+To compile this code using csc.exe:
+
+bash
+csc /target:exe /out:ImageAdjustment.exe /reference:System.Drawing.dll YourFile.cs
+Parameter Ranges
+Brightness: -1.0 (darkest) to 1.0 (brightest), where 0 is normal
+
+Contrast: -1.0 (minimum contrast) to 1.0 (maximum contrast), where 0 is normal
+
+Saturation: 0.0 (grayscale) to 2.0 (high saturation), where 1.0 is normal
+
+Key Features
+Uses ColorMatrix for efficient pixel operations
+
+Proper resource disposal with using statements
+
+Input validation for parameter ranges
+
+Combined matrix operations for optimal performance
+
+Works with any Bitmap format supported by .NET
+
+The method applies all adjustments in a single pass through the image, making it very efficient compared to manual pixel-by-pixel manipulation.
+
+Great work.
+I have made this utility to use the class you wrote. But using float values is hard to remember. Can you adjust the argument parsing logic to accept percentages instead of floats? for example:
+Brightness, contrast and saturation would be between -100% to 100%
+
+/*
+Brightness: -1.0 (darkest) to 1.0 (brightest), where 0 is normal
+Contrast: -1.0 (minimum contrast) to 1.0 (maximum contrast), where 0 is normal
+Saturation: 0.0 (grayscale) to 2.0 (high saturation), where 1.0 is normal
+*/
+
+using System;
+using System.Drawing;
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        if (args.Length != 5)
+        {
+            Console.WriteLine("Usage: program.exe INPUT OUTPUT BRIGHTNESS CONTRAST SATURATION");
+            Console.WriteLine("Example: program.exe input.jpg output.jpg 0.2 1.2 1.5");
+            return;
+        }
+
+        string inputPath = args[0];
+        string outputPath = args[1];
+
+        if (!float.TryParse(args[2], out float brightness) ||
+            !float.TryParse(args[3], out float contrast) ||
+            !float.TryParse(args[4], out float saturation))
+        {
+            Console.WriteLine("Error: BRIGHTNESS, CONTRAST, and SATURATION must be valid float values.");
+            return;
+        }
+
+        try
+        {
+            using (Bitmap bitmap = new Bitmap(inputPath))
+            {
+                ImageAdjustment.ApplyAdjustment(bitmap, brightness, contrast, saturation);
+                bitmap.Save(outputPath);
+            }
+
+            Console.WriteLine("Image saved to: " + outputPath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error processing image: " + ex.Message);
+        }
+    }
+}
+Here's the updated utility that accepts percentages (-100% to 100%) instead of float values, with the conversion logic handled automatically:
+
+csharp
+using System;
+using System.Drawing;
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        if (args.Length != 5)
+        {
+            Console.WriteLine("Usage: program.exe INPUT OUTPUT BRIGHTNESS% CONTRAST% SATURATION%");
+            Console.WriteLine("Example: program.exe input.jpg output.jpg 20 -15 50");
+            Console.WriteLine("Ranges: -100% to 100% for all parameters");
+            return;
+        }
+
+        string inputPath = args[0];
+        string outputPath = args[1];
+
+        if (!int.TryParse(args[2], out int brightnessPercent) ||
+            !int.TryParse(args[3], out int contrastPercent) ||
+            !int.TryParse(args[4], out int saturationPercent))
+        {
+            Console.WriteLine("Error: BRIGHTNESS, CONTRAST, and SATURATION must be valid integer percentages.");
+            return;
+        }
+
+        // Validate percentage ranges
+        if (brightnessPercent < -100 || brightnessPercent > 100 ||
+            contrastPercent < -100 || contrastPercent > 100 ||
+            saturationPercent < -100 || saturationPercent > 100)
+        {
+            Console.WriteLine("Error: All percentages must be between -100 and 100.");
+            return;
+        }
+
+        try
+        {
+            // Convert percentages to float values expected by the adjustment method
+            float brightness = PercentageToBrightness(brightnessPercent);
+            float contrast = PercentageToContrast(contrastPercent);
+            float saturation = PercentageToSaturation(saturationPercent);
+
+            Console.WriteLine($"Adjusting image: Brightness={brightnessPercent}%, Contrast={contrastPercent}%, Saturation={saturationPercent}%");
+            Console.WriteLine($"Converted to: Brightness={brightness:F2}, Contrast={contrast:F2}, Saturation={saturation:F2}");
+
+            using (Bitmap bitmap = new Bitmap(inputPath))
+            {
+                ImageAdjustment.ApplyAdjustment(bitmap, brightness, contrast, saturation);
+                bitmap.Save(outputPath);
+            }
+
+            Console.WriteLine("Image successfully saved to: " + outputPath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error processing image: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Converts brightness percentage (-100 to 100) to float value (-1.0 to 1.0)
+    /// -100% = -1.0 (darkest), 0% = 0.0 (normal), 100% = 1.0 (brightest)
+    /// </summary>
+    private static float PercentageToBrightness(int percent)
+    {
+        return percent / 100.0f;
+    }
+
+    /// <summary>
+    /// Converts contrast percentage (-100 to 100) to float value (-1.0 to 1.0)
+    /// -100% = -1.0 (minimum contrast), 0% = 0.0 (normal), 100% = 1.0 (maximum contrast)
+    /// </summary>
+    private static float PercentageToContrast(int percent)
+    {
+        return percent / 100.0f;
+    }
+
+    /// <summary>
+    /// Converts saturation percentage (-100 to 100) to float value (0.0 to 2.0)
+    /// -100% = 0.0 (grayscale), 0% = 1.0 (normal), 100% = 2.0 (high saturation)
+    /// </summary>
+    private static float PercentageToSaturation(int percent)
+    {
+        // Map -100..0..100 to 0.0..1.0..2.0
+        return 1.0f + (percent / 100.0f);
+    }
+}
+And here's the updated usage information and examples:
+
+Usage Examples
+bash
+# Normal usage with percentages
+program.exe input.jpg output.jpg 0 0 0        # No changes
+program.exe input.jpg output.jpg 20 -15 50    # +20% brightness, -15% contrast, +50% saturation
+program.exe input.jpg output.jpg -30 80 -100  # -30% brightness, +80% contrast, -100% saturation (grayscale)
+program.exe input.jpg output.jpg 100 100 100  # Maximum adjustments
+Percentage to Float Conversion
+The conversion logic works as follows:
+
+Brightness: -100% = -1.0, 0% = 0.0, +100% = +1.0
+
+Contrast: -100% = -1.0, 0% = 0.0, +100% = +1.0
+
+Saturation: -100% = 0.0, 0% = 1.0, +100% = 2.0
+
+Compilation
+Compile with:
+
+bash
+csc /target:exe /out:ImageAdjustment.exe /reference:System.Drawing.dll Program.cs ImageAdjustment.cs
+This makes the utility much more intuitive to use since percentages are easier to understand and remember than abstract float values. The user can now think in terms of "I want 20% more brightness" rather than "I need a brightness value of 0.2".
+
+The class works ok, but I have implemented the class you wrote in a WinForms program. I try to update the image when a trackbar is moved, but I get incorrect output:
+
+Here is the relevant code:
+This is the dialog containing the track bars:
+
+using System;
+using System.Drawing;
+using System.Windows.Forms;
+
+public class ImageAdjustDialog : Form {
+
+    public float Brightness { get; private set; } = 0f;  // -1 to +1
+    public float Contrast { get; private set; } = 0f;    // -1 to +1
+    public float Saturation { get; private set; } = 1f;  // 0 to 2
+
+    private TrackBar tbBrightness, tbContrast, tbSaturation;
+    private Label lbBrightness, lbContrast, lbSaturation;
+
+    public event Action<float, float, float> ValuesChanged;
+
+    public ImageAdjustDialog(float initialBrightness, float initialContrast, float initialSaturation)
+    {
+        this.Text = "Adjust Image";
+        this.FormBorderStyle = FormBorderStyle.FixedDialog;
+        this.StartPosition = FormStartPosition.CenterParent;
+        this.ClientSize = new Size(300, 250);
+        this.MaximizeBox = false;
+        this.MinimizeBox = false;
+
+        Brightness = initialBrightness;
+        Contrast = initialContrast;
+        Saturation = initialSaturation;
+
+        // Brightness
+        lbBrightness = new Label() { Text = $"Brightness: {Brightness:0.00}", Left = 10, Top = 10, Width = 280 };
+        tbBrightness = new TrackBar() { Minimum = 0, Maximum = 200, Value = 100 /*(int)(Brightness * 100)*/, Left = 10, Top = 30, Width = 280 };
+        //tbBrightness.Scroll += (s, e) => { Brightness = tbBrightness.Value / 100f; lbBrightness.Text = $"Brightness: {Brightness:0.00}"; };
+        tbBrightness.Scroll += (s, e) => { 
+            Brightness = tbBrightness.Value / 100f - 1.0f; 
+            lbBrightness.Text = $"Brightness: {Brightness:0.00}"; 
+            ValuesChanged?.Invoke(Brightness, Contrast, Saturation);
+        };
+
+        // Contrast
+        lbContrast = new Label() { Text = $"Contrast: {Contrast:0.00}", Left = 10, Top = 70, Width = 280 };
+        tbContrast = new TrackBar() { Minimum = 0, Maximum = 200, Value = 100 /*(int)(Contrast * 100)*/, Left = 10, Top = 90, Width = 280 };
+        //tbContrast.Scroll += (s, e) => { Contrast = tbContrast.Value / 100f; lbContrast.Text = $"Contrast: {Contrast:0.00}"; };
+        tbContrast.Scroll += (s, e) => { 
+            Contrast = tbContrast.Value / 100f - 1.0f; 
+            lbContrast.Text = $"Contrast: {Contrast:0.00}";
+            ValuesChanged?.Invoke(Brightness, Contrast, Saturation);
+        };
+
+        // Saturation
+        lbSaturation = new Label() { Text = $"Saturation: {Saturation:0.00}", Left = 10, Top = 130, Width = 280 };
+        tbSaturation = new TrackBar() { Minimum = 0, Maximum = 200, Value = 100 /*(int)(Saturation * 100)*/, Left = 10, Top = 150, Width = 280 };
+        //tbSaturation.Scroll += (s, e) => { Saturation = tbSaturation.Value / 100f; lbSaturation.Text = $"Saturation: {Saturation:0.00}"; };
+        tbSaturation.Scroll += (s, e) => { 
+            Saturation = tbSaturation.Value / 100f; 
+            lbSaturation.Text = $"Saturation: {Saturation:0.00}";
+            ValuesChanged?.Invoke(Brightness, Contrast, Saturation);
+        };
+
+        var okButton = new Button() { Text = "OK", DialogResult = DialogResult.OK, Left = 130, Top = 200, Width = 60 };
+        this.AcceptButton = okButton;
+
+        var cancelButton = new Button() { Text = "Cancel", DialogResult = DialogResult.Cancel, Left = 200, Top = 200, Width = 60 };
+        this.CancelButton = cancelButton; // pressing ESC will trigger Cancel
+
+        this.Controls.AddRange(new Control[] { lbBrightness, tbBrightness, lbContrast, tbContrast, lbSaturation, tbSaturation, okButton, cancelButton });
+        //this.Controls.Add(cancelButton);
+    }
+}
+
+
+
+And this is the relevant code on the main form: (the variable image is a Bitmap being displayed in a Control)
+
+public void ApplyAdjustmentsLive(Bitmap originalImage, float brightness, float contrast, float saturation)
+    {
+        if (originalImage == null)
+            return;
+
+        if (image != null)
+            image.Dispose();
+
+        // Validate input ranges
+        brightness = Math.Max(-1.0f, Math.Min(1.0f, brightness));    // -1 to 1
+        contrast = Math.Max(-1.0f, Math.Min(1.0f, contrast));        // -1 to 1
+        saturation = Math.Max(0.0f, Math.Min(2.0f, saturation));     // 0 to 2
+
+        // Create color matrix for brightness, contrast, and saturation
+        ColorMatrix colorMatrix = CreateAdjustmentMatrix(brightness, contrast, saturation);
+
+        // Apply the color matrix
+        image = new Bitmap(originalImage.Width, originalImage.Height);
+        using (Graphics g = Graphics.FromImage(image)) {
+            /*
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.SmoothingMode = SmoothingMode.HighQuality;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.CompositingQuality = CompositingQuality.HighQuality;
+            */
+
+            ImageAttributes imageAttributes = new ImageAttributes();
+            
+            try
+            {
+                imageAttributes.SetColorMatrix(colorMatrix, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+                
+                Rectangle rect = new Rectangle(0, 0, originalImage.Width, originalImage.Height);
+                g.DrawImage(originalImage, rect, 0, 0, originalImage.Width, originalImage.Height, 
+                                 GraphicsUnit.Pixel, imageAttributes);
+            }
+            finally
+            {
+                imageAttributes?.Dispose();
+            }
+        }
+        Invalidate();
+    }
+
+and here is the handler that opens the dialog:
+
+    private void OpenAdjustDialog() {
+        if (viewer.image == null)
+            return;
+
+        using (var dlg = new ImageAdjustDialog(1f, 1f, 1f)) {
+            // Store original image for live updates
+            Bitmap backup = new Bitmap(originalImage);
+
+            dlg.ValuesChanged += (b, c, s) => {
+                viewer.ApplyAdjustmentsLive(backup, b, c, s);
+            };
+
+            var result = dlg.ShowDialog();
+
+            if (result == DialogResult.OK) {
+                // Commit changes
+                //originalImage.Dispose();
+                //originalImage = new Bitmap(viewer.image);
+            } else {
+                // Restore original image if canceled
+                viewer.image.Dispose();
+                viewer.image = new Bitmap(originalImage);
+                viewer.Invalidate();
+            }
+
+            backup.Dispose();
+        }
+    }
+
+
+Can you spot the problem?
+I can spot several issues in your code that are causing the incorrect output:
+
+Problem 1: Incorrect TrackBar Initialization
+Your trackbars are initialized with wrong values. You're setting them to 100 but your conversion logic expects different ranges:
+
+csharp
+// Current (incorrect) initialization:
+tbBrightness = new TrackBar() { Minimum = 0, Maximum = 200, Value = 100 };
+tbContrast = new TrackBar() { Minimum = 0, Maximum = 200, Value = 100 };
+tbSaturation = new TrackBar() { Minimum = 0, Maximum = 200, Value = 100 };
+
+// Should be:
+tbBrightness = new TrackBar() { Minimum = 0, Maximum = 200, Value = (int)((initialBrightness + 1.0f) * 100) };
+tbContrast = new TrackBar() { Minimum = 0, Maximum = 200, Value = (int)((initialContrast + 1.0f) * 100) };
+tbSaturation = new TrackBar() { Minimum = 0, Maximum = 200, Value = (int)(initialSaturation * 100) };
+Problem 2: Wrong Default Values in Dialog Constructor
+You're calling the dialog with (1f, 1f, 1f) but these are extreme values:
+
+csharp
+// Current (extreme values):
+using (var dlg = new ImageAdjustDialog(1f, 1f, 1f))
+
+// Should be (normal/default values):
+using (var dlg = new ImageAdjustDialog(0f, 0f, 1f))
+Problem 3: Memory Management Issue
+You're creating a backup bitmap but disposing it while the dialog is still open and the ValuesChanged event might still be called:
+
+csharp
+Bitmap backup = new Bitmap(originalImage);
+// ... dialog usage ...
+backup.Dispose(); // This happens while dialog might still reference it!
+Here's the corrected code:
+Fixed ImageAdjustDialog:
+
+csharp
+public class ImageAdjustDialog : Form 
+{
+    public float Brightness { get; private set; }
+    public float Contrast { get; private set; }
+    public float Saturation { get; private set; }
+
+    private TrackBar tbBrightness, tbContrast, tbSaturation;
+    private Label lbBrightness, lbContrast, lbSaturation;
+
+    public event Action<float, float, float> ValuesChanged;
+
+    public ImageAdjustDialog(float initialBrightness, float initialContrast, float initialSaturation)
+    {
+        this.Text = "Adjust Image";
+        this.FormBorderStyle = FormBorderStyle.FixedDialog;
+        this.StartPosition = FormStartPosition.CenterParent;
+        this.ClientSize = new Size(300, 250);
+        this.MaximizeBox = false;
+        this.MinimizeBox = false;
+
+        Brightness = initialBrightness;
+        Contrast = initialContrast;
+        Saturation = initialSaturation;
+
+        // Brightness: -1.0 to +1.0, mapped to trackbar 0-200
+        lbBrightness = new Label() { Text = $"Brightness: {Brightness:0.00}", Left = 10, Top = 10, Width = 280 };
+        tbBrightness = new TrackBar() { 
+            Minimum = 0, 
+            Maximum = 200, 
+            Value = (int)((Brightness + 1.0f) * 100), // Convert -1..1 to 0..200
+            Left = 10, 
+            Top = 30, 
+            Width = 280 
+        };
+        tbBrightness.Scroll += (s, e) => { 
+            Brightness = tbBrightness.Value / 100f - 1.0f; 
+            lbBrightness.Text = $"Brightness: {Brightness:0.00}"; 
+            ValuesChanged?.Invoke(Brightness, Contrast, Saturation);
+        };
+
+        // Contrast: -1.0 to +1.0, mapped to trackbar 0-200
+        lbContrast = new Label() { Text = $"Contrast: {Contrast:0.00}", Left = 10, Top = 70, Width = 280 };
+        tbContrast = new TrackBar() { 
+            Minimum = 0, 
+            Maximum = 200, 
+            Value = (int)((Contrast + 1.0f) * 100), // Convert -1..1 to 0..200
+            Left = 10, 
+            Top = 90, 
+            Width = 280 
+        };
+        tbContrast.Scroll += (s, e) => { 
+            Contrast = tbContrast.Value / 100f - 1.0f; 
+            lbContrast.Text = $"Contrast: {Contrast:0.00}";
+            ValuesChanged?.Invoke(Brightness, Contrast, Saturation);
+        };
+
+        // Saturation: 0.0 to 2.0, mapped to trackbar 0-200
+        lbSaturation = new Label() { Text = $"Saturation: {Saturation:0.00}", Left = 10, Top = 130, Width = 280 };
+        tbSaturation = new TrackBar() { 
+            Minimum = 0, 
+            Maximum = 200, 
+            Value = (int)(Saturation * 100), // Convert 0..2 to 0..200
+            Left = 10, 
+            Top = 150, 
+            Width = 280 
+        };
+        tbSaturation.Scroll += (s, e) => { 
+            Saturation = tbSaturation.Value / 100f; 
+            lbSaturation.Text = $"Saturation: {Saturation:0.00}";
+            ValuesChanged?.Invoke(Brightness, Contrast, Saturation);
+        };
+
+        var okButton = new Button() { Text = "OK", DialogResult = DialogResult.OK, Left = 130, Top = 200, Width = 60 };
+        this.AcceptButton = okButton;
+
+        var cancelButton = new Button() { Text = "Cancel", DialogResult = DialogResult.Cancel, Left = 200, Top = 200, Width = 60 };
+        this.CancelButton = cancelButton;
+
+        this.Controls.AddRange(new Control[] { lbBrightness, tbBrightness, lbContrast, tbContrast, lbSaturation, tbSaturation, okButton, cancelButton });
+    }
+}
+Fixed OpenAdjustDialog method:
+
+csharp
+private void OpenAdjustDialog() 
+{
+    if (viewer.image == null)
+        return;
+
+    // Use normal/default values instead of extreme values
+    using (var dlg = new ImageAdjustDialog(0f, 0f, 1f)) 
+    {
+        // Create backup for live preview
+        Bitmap backup = new Bitmap(originalImage);
+        
+        bool previewApplied = false;
+        
+        dlg.ValuesChanged += (b, c, s) => {
+            viewer.ApplyAdjustmentsLive(backup, b, c, s);
+            previewApplied = true;
+        };
+
+        var result = dlg.ShowDialog();
+
+        if (result == DialogResult.OK) {
+            // Changes are already applied to viewer.image
+            // If you need to update originalImage, do it here:
+            // originalImage.Dispose();
+            // originalImage = new Bitmap(viewer.image);
+        } else {
+            // Restore original image if canceled
+            if (previewApplied) {
+                viewer.image.Dispose();
+                viewer.image = new Bitmap(originalImage);
+                viewer.Invalidate();
+            }
+        }
+
+        backup.Dispose();
+    }
+}
+The key fixes are:
+
+Correct trackbar initialization based on the actual value ranges
+
+Proper default values (0, 0, 1) instead of extreme values (1, 1, 1)
+
+Better memory management for the backup bitmap
+
+This should resolve the incorrect output you're seeing when moving the trackbars.
+
+how to get the file passed to the executable in a WinForms program
+In a WinForms program, you can get the file passed to the executable through the command line arguments. Here are several ways to access them:
+
+Method 1: Using Environment.GetCommandLineArgs() (Recommended)
+csharp
+using System;
+using System.Windows.Forms;
+
+static class Program
+{
+    [STAThread]
+    static void Main()
+    {
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        
+        // Get all command line arguments
+        string[] args = Environment.GetCommandLineArgs();
+        
+        string filePath = null;
+        
+        // Skip the first argument (executable path) and check for file arguments
+        if (args.Length > 1)
+        {
+            filePath = args[1];
+            
+            // Optional: Validate that it's a file that exists
+            if (!System.IO.File.Exists(filePath))
+            {
+                MessageBox.Show($"File not found: {filePath}", "Error", 
+                              MessageBoxButtons.OK, MessageBoxIcon.Error);
+                filePath = null;
+            }
+        }
+        
+        // Pass the file path to your main form
+        Application.Run(new MainForm(filePath));
+    }
+}
+Method 2: Using Main(string[] args) parameter
+csharp
+using System;
+using System.Windows.Forms;
+
+static class Program
+{
+    [STAThread]
+    static void Main(string[] args)
+    {
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        
+        string filePath = null;
+        
+        if (args.Length > 0)
+        {
+            filePath = args[0];
+            
+            // Optional: Validate file exists
+            if (!System.IO.File.Exists(filePath))
+            {
+                MessageBox.Show($"File not found: {filePath}", "Error", 
+                              MessageBoxButtons.OK, MessageBoxIcon.Error);
+                filePath = null;
+            }
+        }
+        
+        Application.Run(new MainForm(filePath));
+    }
+}
+Method 3: In your MainForm constructor
+csharp
+public partial class MainForm : Form
+{
+    public MainForm(string filePath = null)
+    {
+        InitializeComponent();
+        
+        if (!string.IsNullOrEmpty(filePath))
+        {
+            LoadFile(filePath);
+        }
+    }
+    
+    private void LoadFile(string filePath)
+    {
+        try
+        {
+            // Load your image or file here
+            if (System.IO.File.Exists(filePath))
+            {
+                Bitmap image = new Bitmap(filePath);
+                // Do something with the image
+                this.Text = $"Image Editor - {System.IO.Path.GetFileName(filePath)}";
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error loading file: {ex.Message}", "Error", 
+                          MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+}
+Method 4: Handle file drag & drop (Bonus)
+You can also support drag-and-drop in your form:
+
+csharp
+public partial class MainForm : Form
+{
+    public MainForm(string filePath = null)
+    {
+        InitializeComponent();
+        
+        // Enable drag and drop
+        this.AllowDrop = true;
+        this.DragEnter += MainForm_DragEnter;
+        this.DragDrop += MainForm_DragDrop;
+        
+        if (!string.IsNullOrEmpty(filePath))
+        {
+            LoadFile(filePath);
+        }
+    }
+    
+    private void MainForm_DragEnter(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            e.Effect = DragDropEffects.Copy;
+        else
+            e.Effect = DragDropEffects.None;
+    }
+    
+    private void MainForm_DragDrop(object sender, DragEventArgs e)
+    {
+        string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
+        if (files.Length > 0)
+        {
+            LoadFile(files[0]);
+        }
+    }
+    
+    private void LoadFile(string filePath)
+    {
+        try
+        {
+            // Your file loading logic here
+            // Example for images:
+            string extension = System.IO.Path.GetExtension(filePath).ToLower();
+            string[] supportedExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".gif" };
+            
+            if (Array.IndexOf(supportedExtensions, extension) >= 0)
+            {
+                Bitmap image = new Bitmap(filePath);
+                // Display the image
+                this.Text = $"Image Editor - {System.IO.Path.GetFileName(filePath)}";
+            }
+            else
+            {
+                MessageBox.Show("Unsupported file format", "Error", 
+                              MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error loading file: {ex.Message}", "Error", 
+                          MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+}
+Usage Examples
+Users can now pass files to your executable in these ways:
+
+Command line: YourProgram.exe "C:\path\to\image.jpg"
+
+Drag & drop: Drag a file onto the executable
+
+Right-click → Open with: Set your program as default for image files
+
+Drag onto form: Drag files directly onto your running application
+
+Complete Example with Error Handling
+csharp
+static class Program
+{
+    [STAThread]
+    static void Main(string[] args)
+    {
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        
+        string filePath = null;
+        
+        try
+        {
+            if (args.Length > 0)
+            {
+                filePath = args[0];
+                
+                // Basic validation
+                if (string.IsNullOrWhiteSpace(filePath))
+                {
+                    MessageBox.Show("Invalid file path provided.", "Error", 
+                                  MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+                else if (!System.IO.File.Exists(filePath))
+                {
+                    MessageBox.Show($"File not found: {filePath}", "Error", 
+                                  MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    filePath = null;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error processing command line: {ex.Message}", "Error", 
+                          MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        
+        Application.Run(new MainForm(filePath));
+    }
+}
+The Main(string[] args) approach is the most common and straightforward method for handling command line arguments in WinForms applications.
+
+what is the name of the even that is triggered when a form is loaded
+The event that is triggered when a form is loaded is called the Load event.
+
+Here's how to use it:
+
+Basic Usage
+csharp
+public partial class MainForm : Form
+{
+    public MainForm()
+    {
+        InitializeComponent();
+        
+        // Subscribe to the Load event
+        this.Load += MainForm_Load;
+    }
+    
+    private void MainForm_Load(object sender, EventArgs e)
+    {
+        // This code runs when the form is loaded
+        MessageBox.Show("Form is now loaded!");
+        
+        // You can initialize components, load data, etc. here
+        InitializeData();
+        SetupUI();
+    }
+    
+    private void InitializeData()
+    {
+        // Load your data here
+    }
+    
+    private void SetupUI()
+    {
+        // Setup UI components here
+    }
+}
+Alternative: Using the Designer
+You can also subscribe to the Load event through the form designer:
+
+Select the form in the designer
+
+Go to the Properties window
+
+Click the Events button (lightning bolt)
+
+Double-click the Load event
+
+This will automatically create the event handler:
+
+csharp
+private void MainForm_Load(object sender, EventArgs e)
+{
+    // Your initialization code here
+}
+Other Related Form Events
+Shown - Occurs after the form is first displayed
+
+Activated - Occurs when the form gets focus
+
+Deactivate - Occurs when the form loses focus
+
+FormClosing - Occurs when the form is about to close
+
+FormClosed - Occurs after the form has closed
+
+Complete Example with Multiple Events
+csharp
+public partial class MainForm : Form
+{
+    public MainForm()
+    {
+        InitializeComponent();
+        
+        // Subscribe to form events
+        this.Load += MainForm_Load;
+        this.Shown += MainForm_Shown;
+        this.FormClosing += MainForm_FormClosing;
+    }
+    
+    private void MainForm_Load(object sender, EventArgs e)
+    {
+        // Perfect for initialization that doesn't require the form to be visible
+        LoadSettings();
+        InitializeComponents();
+        Console.WriteLine("Form loaded - initialization complete");
+    }
+    
+    private void MainForm_Shown(object sender, EventArgs e)
+    {
+        // Good for things that require the form to be visible
+        // Like focusing controls or starting animations
+        someTextBox.Focus();
+        Console.WriteLine("Form now visible to user");
+    }
+    
+    private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
+    {
+        // Save settings, clean up resources
+        SaveSettings();
+        Console.WriteLine("Form closing - cleanup complete");
+    }
+    
+    private void LoadSettings()
+    {
+        // Load application settings
+    }
+    
+    private void InitializeComponents()
+    {
+        // Initialize form components
+    }
+    
+    private void SaveSettings()
+    {
+        // Save application settings
+    }
+}
+Important Notes
+The Load event occurs before the form becomes visible to the user
+
+The Shown event occurs after the form is displayed
+
+Use Load for initialization that doesn't require the form to be visible
+
+Use Shown for operations that need the form to be fully rendered and visible
+
+For your image adjustment application, the Load event would be a good place to initialize your image processing components and load any saved settings.
+
+what's the difference between Shown  and Load
+The main differences between the Shown and Load events are in their timing and what you can safely do in each:
+
+Timing Difference
+Load: Occurs BEFORE the form becomes visible
+
+Shown: Occurs AFTER the form is displayed and visible to the user
+
+Execution Order
+csharp
+Form Constructor → Load Event → Form becomes visible → Shown Event
+Practical Examples
+Load Event - Use for "Behind the Scenes" Setup
+csharp
+private void MainForm_Load(object sender, EventArgs e)
+{
+    // ✅ GOOD for Load event:
+    
+    // Loading data from files/database
+    LoadUserSettings();
+    LoadRecentFiles();
+    
+    // Initializing components that don't need to be visible
+    InitializeImageProcessor();
+    SetupHotkeys();
+    
+    // Setting internal state
+    currentZoomLevel = 1.0f;
+    isModified = false;
+    
+    // ❌ BAD for Load event:
+    // this.Focus() - form isn't visible yet
+    // MessageBox.Show() - will show behind form
+    // Starting animations - user can't see them yet
+}
+Shown Event - Use for "User-Facing" Setup
+csharp
+private void MainForm_Shown(object sender, EventArgs e)
+{
+    // ✅ GOOD for Shown event:
+    
+    // Focusing controls (form is now visible)
+    searchTextBox.Focus();
+    
+    // Showing dialogs or messages
+    if (FirstTimeRun) 
+        ShowWelcomeDialog();
+    
+    // Starting animations or transitions
+    StartIntroAnimation();
+    
+    // Operations that require the form to be fully rendered
+    CenterToScreen(); // Can be done here if needed
+    
+    // Auto-opening files passed via command line
+    if (!string.IsNullOrEmpty(initialFile))
+        OpenFile(initialFile);
+}
+Complete Real-World Example
+csharp
+public partial class ImageEditorForm : Form
+{
+    private string initialImagePath;
+    
+    public ImageEditorForm(string imagePath = null)
+    {
+        InitializeComponent();
+        initialImagePath = imagePath;
+        
+        this.Load += ImageEditorForm_Load;
+        this.Shown += ImageEditorForm_Shown;
+    }
+    
+    private void ImageEditorForm_Load(object sender, EventArgs e)
+    {
+        // Initialize components that don't need visibility
+        InitializeImageProcessingLibrary();
+        LoadApplicationSettings();
+        SetupMenuShortcuts();
+        InitializeUndoRedoSystem();
+        
+        // Pre-load the image in memory but don't display yet
+        if (!string.IsNullOrEmpty(initialImagePath) && File.Exists(initialImagePath))
+        {
+            PreloadImage(initialImagePath);
+        }
+    }
+    
+    private void ImageEditorForm_Shown(object sender, EventArgs e)
+    {
+        // Now the form is visible, we can do user-facing operations
+        
+        // Focus the main canvas
+        pictureBox.Focus();
+        
+        // Display the pre-loaded image
+        if (!string.IsNullOrEmpty(initialImagePath))
+        {
+            DisplayImage(initialImagePath);
+            
+            // Show a welcome tip (now it will appear over the visible form)
+            if (IsFirstTimeUser())
+            {
+                ShowQuickStartTips();
+            }
+        }
+        else
+        {
+            // Prompt user to open a file now that form is visible
+            OpenFileDialog();
+        }
+        
+        // Start any intro animations
+        AnimateToolbarEntrance();
+    }
+    
+    private void PreloadImage(string path)
+    {
+        // Load image into memory but don't assign to UI yet
+        // This happens during Load when form isn't visible
+    }
+    
+    private void DisplayImage(string path)
+    {
+        // Assign the image to UI controls
+        // This happens during Shown when form is visible
+    }
+}
+Key Differences Summary
+Aspect	Load Event	Shown Event
+Timing	Before form is visible	After form is visible
+Use Case	Internal initialization	User-facing initialization
+Focus	Can't focus controls yet	Can safely focus controls
+Dialogs	Will appear behind form	Will appear properly
+Animations	User can't see them	User can see them
+Performance	Good for heavy operations	Good for quick UI updates
+When to Use Which
+Use Load for: Loading data, initializing components, setting up event handlers, reading settings
+
+Use Shown for: Focusing controls, showing dialogs, starting animations, auto-opening files, user prompts
+
+For your image adjustment application, you'd typically use Load to initialize your image processing components and Shown to focus the main image control or show any welcome messages.
+
+thank you very much
+You're very welcome! I'm glad I could help you with the WinForms events and the image adjustment functionality.
+
+If you run into any other issues with:
+
+The image adjustment algorithms
+
+WinForms UI challenges
+
+Performance optimization
+
+Or anything else related to your project
+
+Don't hesitate to ask! Good luck with your image editing application - it sounds like a great project.
+
+Happy coding! 😊

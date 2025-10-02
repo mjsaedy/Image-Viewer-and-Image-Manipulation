@@ -1,0 +1,746 @@
+﻿what is gamma and how does it differ from brightness and contrast. and how to change it efficiently using C#.
+Of course! This is an excellent question that gets to the heart of image manipulation. Let's break it down.
+
+1. What is Gamma, Brightness, and Contrast?
+Think of an image's pixel data as a number between 0 (pure black) and 1 (pure white). How your monitor translates that number into actual light is not linear.
+
+Gamma (γ)
+What it is: Gamma is a non-linear operation that primarily affects the mid-tones of an image. It defines the relationship between the numerical value of a pixel and its actual displayed luminance.
+
+The Problem it Solves: Human vision is more sensitive to changes in dark tones than bright ones. To store image data efficiently and match human perception, we use a power-law function.
+
+The Effect: It's best understood by its adjustments:
+
+Gamma > 1.0: Makes the image darker. It "pushes down" mid-tones towards black. Shadows become crushed.
+
+Gamma < 1.0: Makes the image brighter. It "lifts up" mid-tones towards white. Highlights can become blown out.
+
+Analogy: Imagine the entire tonal range of your image is a slinky. Applying gamma stretches or compresses the middle of the slinky, leaving the very top and bottom (pure black and white) relatively fixed.
+
+Brightness
+What it is: Brightness is a linear shift of all pixel values.
+
+The Effect: It moves the entire histogram of the image left or right.
+
+Increase Brightness: Every pixel value gets a fixed amount added to it. Pure black (0) becomes dark gray. Pure white (1) stays white (it gets clipped).
+
+Decrease Brightness: Every pixel value gets a fixed amount subtracted from it. Pure white (1) becomes light gray. Pure black (0) stays black.
+
+Analogy: You are lifting or lowering the entire slinky uniformly. You are not changing its shape, just its position.
+
+Contrast
+What it is: Contrast is a linear scaling of pixel values around a midpoint (often 0.5).
+
+The Effect: It stretches or compresses the range of tonal values.
+
+Increase Contrast: Pixel values above the midpoint get brighter, values below the midpoint get darker. This increases the separation between lights and darks.
+
+Decrease Contrast: Pixel values are "pushed" towards the midpoint. The image looks flatter and more gray.
+
+Analogy: You are stretching or compressing the ends of the slinky, making the difference between the top and bottom larger or smaller.
+
+2. Summary of Differences
+Feature	Type of Operation	Primary Effect	Impact on Blacks/Whites
+Gamma	Non-linear (Power Law)	Adjusts mid-tones	Preserves pure black and pure white (theoretically)
+Brightness	Linear (Addition/Subtraction)	Shifts all tones equally	Clips at the extremes (can lose pure black/white)
+Contrast	Linear (Multiplication)	Stretches/compresses tonal range	Clips at the extremes (can lose detail in shadows/highlights)
+3. How to Change Gamma Efficiently in C#
+The most efficient way to apply a gamma correction to an image in C# is to use a Look-Up Table (LUT).
+
+The Concept: Instead of calculating the power function for every single pixel (which is computationally expensive), you pre-calculate the new value for every possible old value (e.g., for 256 values in an 8-bit channel) and store it in an array. Applying the correction then becomes a simple, instantaneous array lookup for each pixel.
+
+The Gamma Correction Formula:
+output = input ^ (1 / gamma)
+(Where input and output are normalized between 0.0 and 1.0)
+
+Here is a complete C# example using System.Drawing (works with Windows Forms, but the core logic is universal).
+
+csharp
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+
+public static class GammaCorrector
+{
+    /// <summary>
+    /// Applies gamma correction to a Bitmap efficiently using a Look-Up Table (LUT).
+    /// </summary>
+    /// <param name="sourceImage">The original bitmap.</param>
+    /// <param name="gamma">The gamma value. >1.0 darkens, <1.0 brightens.</param>
+    /// <returns>A new gamma-corrected Bitmap.</returns>
+    public static Bitmap ApplyGamma(Bitmap sourceImage, double gamma)
+    {
+        // 1. Precompute the Look-Up Table (LUT) for each color component
+        byte[] lut = new byte[256];
+        double inverseGamma = 1.0 / gamma; // We use the inverse in the formula
+
+        for (int i = 0; i < 256; i++)
+        {
+            // Normalize the input value to [0, 1]
+            double normalized = i / 255.0;
+            // Apply the gamma correction formula
+            double corrected = Math.Pow(normalized, inverseGamma);
+            // Convert back to [0, 255] and store in the LUT
+            lut[i] = (byte)(corrected * 255.0);
+        }
+
+        // 2. Create a new bitmap to hold the corrected image
+        Bitmap correctedImage = new Bitmap(sourceImage.Width, sourceImage.Height);
+
+        // 3. Lock bits for fast, direct memory access
+        BitmapData sourceData = sourceImage.LockBits(
+            new Rectangle(0, 0, sourceImage.Width, sourceImage.Height),
+            ImageLockMode.ReadOnly,
+            PixelFormat.Format32bppArgb // Assuming 32-bit ARGB
+        );
+
+        BitmapData destData = correctedImage.LockBits(
+            new Rectangle(0, 0, correctedImage.Width, correctedImage.Height),
+            ImageLockMode.WriteOnly,
+            PixelFormat.Format32bppArgb
+        );
+
+        unsafe
+        {
+            // Get pointers to the start of the bitmaps
+            byte* srcPtr = (byte*)sourceData.Scan0;
+            byte* destPtr = (byte*)destData.Scan0;
+
+            // The stride might have padding at the end of each row, so we use the provided value.
+            int srcStride = sourceData.Stride;
+            int destStride = destData.Stride;
+
+            // Loop through every pixel
+            for (int y = 0; y < sourceImage.Height; y++)
+            {
+                for (int x = 0; x < sourceImage.Width; x++)
+                {
+                    // Calculate the position of the current pixel
+                    int srcPos = (y * srcStride) + (x * 4); // 4 bytes per pixel (BGRA)
+                    int destPos = (y * destStride) + (x * 4);
+
+                    // Apply the LUT to the Blue, Green, and Red channels.
+                    // Ignore the Alpha channel (index 3) to preserve transparency.
+                    destPtr[destPos + 0] = lut[srcPtr[srcPos + 0]]; // Blue
+                    destPtr[destPos + 1] = lut[srcPtr[srcPos + 1]]; // Green
+                    destPtr[destPos + 2] = lut[srcPtr[srcPos + 2]]; // Red
+                    destPtr[destPos + 3] = srcPtr[srcPos + 3];      // Alpha
+                }
+            }
+        }
+
+        // 4. Unlock the bits
+        sourceImage.UnlockBits(sourceData);
+        correctedImage.UnlockBits(destData);
+
+        return correctedImage;
+    }
+}
+
+// Usage Example:
+class Program
+{
+    static void Main()
+    {
+        // Load an image
+        using (Bitmap originalBitmap = new Bitmap("path_to_your_image.jpg"))
+        {
+            // Apply a gamma of 2.2 to brighten it (common correction for dark images)
+            // Or apply 0.45 (~1/2.2) to darken an image that looks washed out.
+            Bitmap correctedBitmap = GammaCorrector.ApplyGamma(originalBitmap, 2.2);
+
+            // Save the result
+            correctedBitmap.Save("path_for_corrected_image.jpg", ImageFormat.Jpeg);
+
+            // Clean up
+            correctedBitmap.Dispose();
+        }
+    }
+}
+Key Points for the C# Code:
+Efficiency: The LUT is the star here. 256 calculations are done once, instead of Width * Height * 3 times (millions for a large image).
+
+Unsafe Code: The unsafe block and LockBits are used for direct memory access, which is dramatically faster than using GetPixel and SetPixel.
+
+Pixel Format: The code assumes a 32-bit ARGB format. You should ensure your input image is in this format or convert it first.
+
+Gamma Value: A gamma of 2.2 is the standard for most Windows and web content. Applying a gamma of 1/2.2 (≈0.45) is the inverse operation, often used to "encode" an image for display on a 2.2 gamma monitor.
+
+By using this LUT-based approach, you can change the gamma of even high-resolution images in real-time or near real-time.
+
+how to change an image to 32 bit
+Of course! Converting an image to 32-bit is a common prerequisite for efficient image processing. In C#, this typically means converting to 32bppArgb format, which uses 8 bits each for the Blue, Green, Red, and Alpha channels.
+
+Here are several ways to do it, from the simplest to the most efficient.
+
+Method 1: The Simple Way (using Bitmap Constructor)
+This is the easiest method and works well for most cases:
+
+csharp
+using System.Drawing;
+using System.Drawing.Imaging;
+
+public static Bitmap ConvertTo32bpp(Image originalImage)
+{
+    // Create a new bitmap with 32bpp format, same dimensions as original
+    Bitmap convertedBitmap = new Bitmap(originalImage.Width, originalImage.Height, 
+                                      PixelFormat.Format32bppArgb);
+    
+    // Draw the original image onto the new bitmap
+    using (Graphics g = Graphics.FromImage(convertedBitmap))
+    {
+        g.DrawImage(originalImage, 0, 0, originalImage.Width, originalImage.Height);
+    }
+    
+    return convertedBitmap;
+}
+
+// Usage
+using (Image original = Image.FromFile("input.jpg"))
+{
+    using (Bitmap thirtyTwoBitImage = ConvertTo32bpp(original))
+    {
+        thirtyTwoBitImage.Save("output_32bit.png", ImageFormat.Png);
+        // Now you can use this with the gamma correction code
+    }
+}
+Method 2: Efficient Pixel-by-Pixel Conversion
+For more control or when working with indexed formats, you might need this approach:
+
+csharp
+using System.Drawing;
+using System.Drawing.Imaging;
+
+public static Bitmap ConvertTo32bppEfficient(Bitmap original)
+{
+    // If it's already 32bpp, return a copy
+    if (original.PixelFormat == PixelFormat.Format32bppArgb)
+    {
+        return new Bitmap(original);
+    }
+    
+    Bitmap converted = new Bitmap(original.Width, original.Height, 
+                                PixelFormat.Format32bppArgb);
+    
+    // Lock bits for both images for fast access
+    BitmapData originalData = original.LockBits(
+        new Rectangle(0, 0, original.Width, original.Height),
+        ImageLockMode.ReadOnly,
+        original.PixelFormat);
+    
+    BitmapData convertedData = converted.LockBits(
+        new Rectangle(0, 0, converted.Width, converted.Height),
+        ImageLockMode.WriteOnly,
+        PixelFormat.Format32bppArgb);
+    
+    unsafe
+    {
+        byte* srcPtr = (byte*)originalData.Scan0;
+        byte* destPtr = (byte*)convertedData.Scan0;
+        
+        int srcBytesPerPixel = Image.GetPixelFormatSize(original.PixelFormat) / 8;
+        if (srcBytesPerPixel == 0) srcBytesPerPixel = 1; // For indexed formats
+        
+        for (int y = 0; y < original.Height; y++)
+        {
+            for (int x = 0; x < original.Width; x++)
+            {
+                int srcPos = (y * originalData.Stride) + (x * srcBytesPerPixel);
+                int destPos = (y * convertedData.Stride) + (x * 4); // 4 bytes for 32bpp
+                
+                Color pixelColor;
+                
+                // Handle different source formats
+                if (original.PixelFormat == PixelFormat.Format24bppRgb)
+                {
+                    // 24bpp RGB: BGR order
+                    destPtr[destPos + 0] = srcPtr[srcPos + 0]; // Blue
+                    destPtr[destPos + 1] = srcPtr[srcPos + 1]; // Green  
+                    destPtr[destPos + 2] = srcPtr[srcPos + 2]; // Red
+                    destPtr[destPos + 3] = 255; // Alpha (fully opaque)
+                }
+                else if (original.PixelFormat == PixelFormat.Format8bppIndexed)
+                {
+                    // For 8bpp indexed, you'd need to look up the color in the palette
+                    // This is a simplified version - you'd need the actual palette
+                    byte index = srcPtr[srcPos];
+                    // You would need to access original.Palette here
+                    // For now, we'll just make it grayscale
+                    destPtr[destPos + 0] = index; // Blue
+                    destPtr[destPos + 1] = index; // Green
+                    destPtr[destPos + 2] = index; // Red
+                    destPtr[destPos + 3] = 255;   // Alpha
+                }
+                else
+                {
+                    // Fallback: use GetPixel (slower but reliable)
+                    pixelColor = original.GetPixel(x, y);
+                    destPtr[destPos + 0] = pixelColor.B;
+                    destPtr[destPos + 1] = pixelColor.G;
+                    destPtr[destPos + 2] = pixelColor.R;
+                    destPtr[destPos + 3] = pixelColor.A;
+                }
+            }
+        }
+    }
+    
+    original.UnlockBits(originalData);
+    converted.UnlockBits(convertedData);
+    
+    return converted;
+}
+Method 3: Complete Solution with Error Handling
+Here's a robust method that handles various scenarios:
+
+csharp
+using System.Drawing;
+using System.Drawing.Imaging;
+
+public static class ImageFormatConverter
+{
+    public static Bitmap ConvertTo32bppArgb(Image image)
+    {
+        if (image == null)
+            throw new ArgumentNullException(nameof(image));
+        
+        // Check if already in desired format
+        if (image is Bitmap bmp && bmp.PixelFormat == PixelFormat.Format32bppArgb)
+        {
+            return new Bitmap(bmp); // Return a copy
+        }
+        
+        // Create new 32bpp bitmap
+        Bitmap result = new Bitmap(image.Width, image.Height, PixelFormat.Format32bppArgb);
+        
+        // Set resolution to match original
+        result.SetResolution(image.HorizontalResolution, image.VerticalResolution);
+        
+        try
+        {
+            using (Graphics g = Graphics.FromImage(result))
+            {
+                g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                g.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                
+                // Draw the image
+                g.DrawImage(image, 0, 0, image.Width, image.Height);
+            }
+            
+            return result;
+        }
+        catch
+        {
+            result.Dispose();
+            throw;
+        }
+    }
+    
+    public static bool Is32bppArgb(Image image)
+    {
+        return image is Bitmap bmp && bmp.PixelFormat == PixelFormat.Format32bppArgb;
+    }
+}
+Complete Example with Gamma Correction
+Here's how you'd use this with the gamma correction code from before:
+
+csharp
+class Program
+{
+    static void Main()
+    {
+        // Load an image (might be 24bpp JPEG, 8bpp PNG, etc.)
+        using (Image originalImage = Image.FromFile("input.jpg"))
+        {
+            Console.WriteLine($"Original format: {originalImage.PixelFormat}");
+            
+            // Convert to 32bpp first
+            using (Bitmap thirtyTwoBitImage = ImageFormatConverter.ConvertTo32bppArgb(originalImage))
+            {
+                Console.WriteLine($"Converted format: {thirtyTwoBitImage.PixelFormat}");
+                
+                // Now apply gamma correction safely
+                Bitmap gammaCorrected = GammaCorrector.ApplyGamma(thirtyTwoBitImage, 2.2);
+                
+                // Save the result (use PNG to preserve quality and alpha channel)
+                gammaCorrected.Save("final_output.png", ImageFormat.Png);
+                
+                gammaCorrected.Dispose();
+            }
+        }
+    }
+}
+Key Points:
+Why Convert to 32-bit?
+
+Consistent pixel format for processing
+
+Supports alpha transparency
+
+8 bits per channel allows precise adjustments
+
+Required for efficient memory access with LockBits
+
+Common 32-bit Formats:
+
+Format32bppArgb - Most common (Alpha, Red, Green, Blue)
+
+Format32bppRgb - No alpha channel (often filled with 0xFF)
+
+Format32bppPArgb - Premultiplied alpha (better performance for composition)
+
+File Format Notes:
+
+JPEG doesn't support 32bpp with alpha - use PNG, TIFF, or BMP
+
+When saving, choose appropriate format based on your needs
+
+The first method (using Graphics.DrawImage) is recommended for most scenarios as it's simple, reliable, and handles format conversions automatically.
+
+Why not use ImageAttributes ?
+You're absolutely right to ask this! Using ImageAttributes is actually a much better and simpler approach for applying gamma correction (and many other color adjustments) than manually processing pixels with a LUT. I should have led with this method.
+
+Why ImageAttributes is Superior for Gamma Correction
+The Better Approach: Using ImageAttributes
+csharp
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Drawing.Drawing2D;
+
+public static Bitmap ApplyGammaWithImageAttributes(Bitmap sourceImage, float gamma)
+{
+    // Create a new 32bpp bitmap to draw onto (preserves format)
+    Bitmap result = new Bitmap(sourceImage.Width, sourceImage.Height, PixelFormat.Format32bppArgb);
+    
+    // Create ImageAttributes for color adjustment
+    using (ImageAttributes imageAttributes = new ImageAttributes())
+    using (Graphics g = Graphics.FromImage(result))
+    {
+        // Configure high-quality rendering
+        g.CompositingMode = CompositingMode.SourceCopy;
+        g.CompositingQuality = CompositingQuality.HighQuality;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.SmoothingMode = SmoothingMode.HighQuality;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        
+        // Create a color matrix for gamma adjustment
+        // Gamma is applied using a simple power function in the color matrix
+        float adjustedGamma = gamma;
+        
+        // Apply gamma to all color channels (R, G, B) but not alpha
+        ColorMatrix colorMatrix = new ColorMatrix
+        {
+            Matrix00 = adjustedGamma, // Red
+            Matrix11 = adjustedGamma, // Green  
+            Matrix22 = adjustedGamma, // Blue
+            Matrix33 = 1.0f,         // Alpha (unchanged)
+            Matrix44 = 1.0f          // Overall scaling (unchanged)
+        };
+        
+        // Set the gamma adjustment
+        imageAttributes.SetColorMatrix(colorMatrix, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+        
+        // Draw the image with gamma correction applied
+        Rectangle destRect = new Rectangle(0, 0, sourceImage.Width, sourceImage.Height);
+        g.DrawImage(sourceImage, destRect, 0, 0, sourceImage.Width, sourceImage.Height, 
+                   GraphicsUnit.Pixel, imageAttributes);
+    }
+    
+    return result;
+}
+Even Simpler: Using ColorMatrix for Proper Gamma Correction
+The above approach has an issue - the ColorMatrix applies a linear scaling, not a proper gamma power function. Here's the correct implementation:
+
+csharp
+public static Bitmap ApplyGammaCorrectly(Bitmap sourceImage, float gamma)
+{
+    Bitmap result = new Bitmap(sourceImage.Width, sourceImage.Height, PixelFormat.Format32bppArgb);
+    
+    using (ImageAttributes imageAttributes = new ImageAttributes())
+    using (Graphics g = Graphics.FromImage(result))
+    {
+        // For proper gamma correction, we need to use a ColorMap or different approach
+        // Since ColorMatrix can't do power functions directly, we use SetGamma method
+        imageAttributes.SetGamma(gamma, ColorAdjustType.Bitmap);
+        
+        Rectangle destRect = new Rectangle(0, 0, sourceImage.Width, sourceImage.Height);
+        g.DrawImage(sourceImage, destRect, 0, 0, sourceImage.Width, sourceImage.Height, 
+                   GraphicsUnit.Pixel, imageAttributes);
+    }
+    
+    return result;
+}
+Complete Example with Multiple Adjustments
+csharp
+public static Bitmap ApplyMultipleAdjustments(Bitmap sourceImage, float gamma, float brightness, float contrast)
+{
+    Bitmap result = new Bitmap(sourceImage.Width, sourceImage.Height, PixelFormat.Format32bppArgb);
+    
+    using (ImageAttributes imageAttributes = new ImageAttributes())
+    using (Graphics g = Graphics.FromImage(result))
+    {
+        g.CompositingQuality = CompositingQuality.HighQuality;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        
+        // Apply gamma correction
+        imageAttributes.SetGamma(gamma, ColorAdjustType.Bitmap);
+        
+        // Apply brightness and contrast using ColorMatrix
+        float scale = contrast; // >1 increase contrast, <1 decrease contrast
+        float translation = (1 - scale) / 2 + brightness; // Adjust for brightness
+        
+        ColorMatrix brightnessContrastMatrix = new ColorMatrix(new float[][]
+        {
+            new float[] {scale, 0, 0, 0, 0},        // Red
+            new float[] {0, scale, 0, 0, 0},        // Green
+            new float[] {0, 0, scale, 0, 0},        // Blue
+            new float[] {0, 0, 0, 1, 0},           // Alpha
+            new float[] {translation, translation, translation, 0, 1} // Brightness
+        });
+        
+        // Combine gamma with brightness/contrast
+        imageAttributes.SetColorMatrix(brightnessContrastMatrix, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+        
+        Rectangle destRect = new Rectangle(0, 0, sourceImage.Width, sourceImage.Height);
+        g.DrawImage(sourceImage, destRect, 0, 0, sourceImage.Width, sourceImage.Height, 
+                   GraphicsUnit.Pixel, imageAttributes);
+    }
+    
+    return result;
+}
+Advantages of Using ImageAttributes
+Aspect	Manual LUT Approach	ImageAttributes Approach
+Code Complexity	Complex, requires unsafe code	Simple, managed code only
+Performance	Very fast (after LUT creation)	Hardware accelerated
+Maintainability	Difficult to modify	Easy to understand and modify
+Flexibility	Customizable but manual	Built-in color transformations
+Safety	Requires unsafe context	Fully managed, safe
+Quality	Good, but manual	High-quality GDI+ rendering
+Why I Initially Used LUT + Manual Processing
+Educational Value: The LUT approach better illustrates what gamma correction actually does mathematically
+
+Precision Control: Direct pixel access gives you absolute control over the algorithm
+
+Special Cases: Some advanced scenarios might require custom processing that ImageAttributes doesn't support
+
+Dependencies: In some environments (like some .NET Core scenarios), GDI+ might not be available
+
+When to Use Each Approach
+Use ImageAttributes when:
+
+You need simple, clean, maintainable code
+
+You're applying standard color adjustments
+
+Performance is good but not critical
+
+You want to leverage hardware acceleration
+
+Use Manual LUT when:
+
+You're implementing custom, non-standard color operations
+
+You need maximum performance for real-time processing
+
+You're in an environment without GDI+
+
+You're learning how image processing works internally
+
+The Verdict
+For most practical applications, your suggestion to use ImageAttributes is absolutely correct - it's simpler, safer, and leverages the built-in capabilities of the framework. The manual LUT approach is more of an educational exercise or for specialized scenarios.
+
+Thank you for calling this out - it's an important correction that provides a much better solution for production code!
+
+Modify the multiple adjustments method to include saturation
+
+public static Bitmap ApplyMultipleAdjustments(Bitmap sourceImage, float gamma, float brightness, float contrast, float saturation)
+Here's the modified method that includes saturation adjustment along with gamma, brightness, and contrast:
+
+csharp
+public static Bitmap ApplyMultipleAdjustments(Bitmap sourceImage, float gamma, float brightness, float contrast, float saturation)
+{
+    Bitmap result = new Bitmap(sourceImage.Width, sourceImage.Height, PixelFormat.Format32bppArgb);
+    
+    using (ImageAttributes imageAttributes = new ImageAttributes())
+    using (Graphics g = Graphics.FromImage(result))
+    {
+        g.CompositingQuality = CompositingQuality.HighQuality;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        
+        // Apply gamma correction
+        imageAttributes.SetGamma(gamma, ColorAdjustType.Bitmap);
+        
+        // Create combined matrix for brightness, contrast, and saturation
+        float scale = contrast; // >1 increase contrast, <1 decrease contrast
+        float translation = (1 - scale) / 2 + brightness; // Adjust for brightness
+        
+        // Saturation matrix components
+        // When saturation = 0: grayscale (weights: R:0.299, G:0.587, B:0.114)
+        // When saturation = 1: original colors
+        // When saturation > 1: oversaturated
+        float saturationFactor = saturation;
+        float rWeight = 0.299f;
+        float gWeight = 0.587f;
+        float bWeight = 0.114f;
+        
+        float rLuminance = rWeight * (1 - saturationFactor);
+        float gLuminance = gWeight * (1 - saturationFactor);
+        float bLuminance = bWeight * (1 - saturationFactor);
+        
+        float[,] saturationMatrix = {
+            { rLuminance + saturationFactor, rLuminance, rLuminance, 0, 0 },     // Red
+            { gLuminance, gLuminance + saturationFactor, gLuminance, 0, 0 },     // Green
+            { bLuminance, bLuminance, bLuminance + saturationFactor, 0, 0 },     // Blue
+            { 0, 0, 0, 1, 0 },                                                   // Alpha
+            { 0, 0, 0, 0, 1 }                                                    // Translation
+        };
+        
+        // Brightness and contrast matrix
+        float[,] brightnessContrastMatrix = {
+            { scale, 0, 0, 0, 0 },                    // Red
+            { 0, scale, 0, 0, 0 },                    // Green  
+            { 0, 0, scale, 0, 0 },                    // Blue
+            { 0, 0, 0, 1, 0 },                        // Alpha
+            { translation, translation, translation, 0, 1 } // Brightness
+        };
+        
+        // Combine saturation with brightness/contrast
+        // We need to multiply the matrices: saturationMatrix × brightnessContrastMatrix
+        float[,] combinedMatrix = MultiplyColorMatrices(saturationMatrix, brightnessContrastMatrix);
+        
+        ColorMatrix finalColorMatrix = new ColorMatrix(combinedMatrix);
+        
+        // Apply the combined color matrix
+        imageAttributes.SetColorMatrix(finalColorMatrix, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+        
+        Rectangle destRect = new Rectangle(0, 0, sourceImage.Width, sourceImage.Height);
+        g.DrawImage(sourceImage, destRect, 0, 0, sourceImage.Width, sourceImage.Height, 
+                   GraphicsUnit.Pixel, imageAttributes);
+    }
+    
+    return result;
+}
+
+// Helper method to multiply two 5x5 color matrices
+private static float[,] MultiplyColorMatrices(float[,] matrix1, float[,] matrix2)
+{
+    float[,] result = new float[5, 5];
+    
+    for (int i = 0; i < 5; i++)
+    {
+        for (int j = 0; j < 5; j++)
+        {
+            result[i, j] = 0;
+            for (int k = 0; k < 5; k++)
+            {
+                result[i, j] += matrix1[i, k] * matrix2[k, j];
+            }
+        }
+    }
+    
+    return result;
+}
+Alternative Simpler Approach (Separate Operations)
+If you prefer a simpler approach that applies operations sequentially rather than combining matrices:
+
+csharp
+public static Bitmap ApplyMultipleAdjustmentsSimple(Bitmap sourceImage, float gamma, float brightness, float contrast, float saturation)
+{
+    Bitmap result = new Bitmap(sourceImage.Width, sourceImage.Height, PixelFormat.Format32bppArgb);
+    
+    using (ImageAttributes imageAttributes = new ImageAttributes())
+    using (Graphics g = Graphics.FromImage(result))
+    {
+        g.CompositingQuality = CompositingQuality.HighQuality;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        
+        // Apply gamma correction
+        imageAttributes.SetGamma(gamma, ColorAdjustType.Bitmap);
+        
+        // Create saturation matrix
+        float rWeight = 0.299f;
+        float gWeight = 0.587f;
+        float bWeight = 0.114f;
+        
+        float rLuminance = rWeight * (1 - saturation);
+        float gLuminance = gWeight * (1 - saturation);
+        float bLuminance = bWeight * (1 - saturation);
+        
+        ColorMatrix saturationMatrix = new ColorMatrix(new float[][]
+        {
+            new float[] { rLuminance + saturation, rLuminance, rLuminance, 0, 0 },
+            new float[] { gLuminance, gLuminance + saturation, gLuminance, 0, 0 },
+            new float[] { bLuminance, bLuminance, bLuminance + saturation, 0, 0 },
+            new float[] { 0, 0, 0, 1, 0 },
+            new float[] { 0, 0, 0, 0, 1 }
+        });
+        
+        // Create brightness/contrast matrix
+        float scale = contrast;
+        float translation = (1 - scale) / 2 + brightness;
+        
+        ColorMatrix brightnessContrastMatrix = new ColorMatrix(new float[][]
+        {
+            new float[] { scale, 0, 0, 0, 0 },
+            new float[] { 0, scale, 0, 0, 0 },
+            new float[] { 0, 0, scale, 0, 0 },
+            new float[] { 0, 0, 0, 1, 0 },
+            new float[] { translation, translation, translation, 0, 1 }
+        });
+        
+        // Apply both matrices (they'll be combined automatically by GDI+)
+        imageAttributes.SetColorMatrix(saturationMatrix, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+        imageAttributes.SetColorMatrix(brightnessContrastMatrix, ColorMatrixFlag.Multiply, ColorAdjustType.Bitmap);
+        
+        Rectangle destRect = new Rectangle(0, 0, sourceImage.Width, sourceImage.Height);
+        g.DrawImage(sourceImage, destRect, 0, 0, sourceImage.Width, sourceImage.Height, 
+                   GraphicsUnit.Pixel, imageAttributes);
+    }
+    
+    return result;
+}
+Usage Examples
+csharp
+// Example usage with different saturation values:
+using (Bitmap original = new Bitmap("input.jpg"))
+{
+    // Normal saturation (1.0)
+    Bitmap normal = ApplyMultipleAdjustments(original, 1.0f, 0.0f, 1.0f, 1.0f);
+    
+    // Grayscale (saturation = 0)
+    Bitmap grayscale = ApplyMultipleAdjustments(original, 1.0f, 0.0f, 1.0f, 0.0f);
+    
+    // Oversaturated (saturation = 2.0)
+    Bitmap oversaturated = ApplyMultipleAdjustments(original, 1.0f, 0.1f, 1.2f, 2.0f);
+    
+    // Desaturated vintage look
+    Bitmap vintage = ApplyMultipleAdjustments(original, 1.2f, 0.1f, 1.1f, 0.5f);
+    
+    normal.Save("normal.jpg");
+    grayscale.Save("grayscale.jpg");
+    oversaturated.Save("oversaturated.jpg");
+    vintage.Save("vintage.jpg");
+}
+Saturation Parameter Guide
+saturation = 0.0: Completely grayscale
+
+saturation = 0.5: 50% desaturated
+
+saturation = 1.0: Original colors (no change)
+
+saturation = 1.5: 50% more saturated
+
+saturation = 2.0: Highly oversaturated
+
+Key Points
+Saturation Matrix: Uses standard luminance weights (0.299, 0.587, 0.114) to convert to grayscale when saturation = 0
+
+Matrix Multiplication: The first approach properly combines the matrices mathematically
+
+Order of Operations: Gamma is applied separately, then the combined saturation/brightness/contrast matrix
+
+Performance: Using ImageAttributes with multiple matrices is still hardware-accelerated and efficient
+
+The second approach (using ColorMatrixFlag.Multiply) is simpler and often sufficient for most use cases, while the first approach gives you precise mathematical control over the order of operations.
